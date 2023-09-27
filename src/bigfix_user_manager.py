@@ -43,7 +43,7 @@ def main():
 
     with open(arg.config, "r", encoding="utf-8") as cfile:
         cdata = cfile.readlines()
-        conf = json.loads(cdata)
+        conf = json.loads("".join(cdata))
 
     # We should have our user info and we should be able to
     # extract passwords from the OS keyring.
@@ -91,12 +91,12 @@ def create_config_file(config_pathname):
     conf["bfserver"] = input("Please enter the BigFix server host name: ")
     conf["bfport"] = input_int("Enter the BigFix server REST API port: ")
     conf["bfuser"] = input("Enter a BigFix master operator user name: ")
-    bfpass = get_password(f"Enter {conf['bfuser']} account password: ")
+    bfpass = get_password(f"Enter {conf['bfuser']} account password")
     conf["email_server"] = input("Enter email server host name: ")
     conf["email_port"] = input_int("Enter email server port (SMTP port)")
     conf["email_user"] = input("Enter SMTP user name: ")
     conf["email_sendto"] = input("Send notification to: ")
-    email_pass = get_password(f"Enter email user {conf['email_user']} password: ")
+    email_pass = get_password(f"Enter email user {conf['email_user']} password")
     conf["disable_days"] = input_int(
         "Disable accounts after this many days of inactivity: "
     )
