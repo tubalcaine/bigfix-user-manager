@@ -94,6 +94,10 @@ def create_config_file(config_pathname):
         "Notify this many days before disabling: "
     )
 
+    if conf["disable_notify_days_before"] > conf["disable_days"]:
+        print("Notification days cannot be greater than disavle days.")
+        sys.exit(1)
+
     keyring.set_password("bigfixUserManager_MO", conf["bfuser"], bfpass)
     keyring.set_password("bigfixUserManager_email", conf["email_user"], email_pass)
 
