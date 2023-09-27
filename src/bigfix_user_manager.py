@@ -7,8 +7,10 @@ import sys
 import os.path
 import json
 import argparse
+import ssl
+import smtplib
 
-# import requests
+import requests
 import keyring
 
 
@@ -18,6 +20,9 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # end of warning suppression
 
+# Declare some "constants"
+KEYRING_BIGFIX = "bigfixUserManager_MO"
+KEYRING_EMAIL = "bigfixUserManager_email"
 
 def main():
     """main() Main routine"""
@@ -39,6 +44,11 @@ def main():
     with open(arg.config, "r", encoding="utf-8") as cfile:
         cdata = cfile.readlines()
         conf = json.loads(cdata)
+
+    # We should have our user info and we should be able to
+    # extract passwords from the OS keyring.
+    conf["bfpass"] = keyring.get_password(KEYRING_BIGFIX, conf["bfuser"])
+    conf["email_pass"] = keyring.get_password(KEYRING_EMAIL, conf["email_user"])
 
     print(f"{conf}")
 
@@ -98,11 +108,29 @@ def create_config_file(config_pathname):
         print("Notification days cannot be greater than disavle days.")
         sys.exit(1)
 
-    keyring.set_password("bigfixUserManager_MO", conf["bfuser"], bfpass)
-    keyring.set_password("bigfixUserManager_email", conf["email_user"], email_pass)
+    keyring.set_password(KEYRING_BIGFIX, conf["bfuser"], bfpass)
+    keyring.set_password(KEYRING_EMAIL, conf["email_user"], email_pass)
 
     with open(config_pathname, "w", encoding="utf-8") as cpath:
         cpath.write(json.dumps(conf, indent=4))
+
+    print("Config file written. Passwords save in keystore.")
+    print("Testing connectivity to BigFix and email.")
+
+    # We have already written out the config file, so we can "slot in"
+    # the passwords for testing here.
+    conf["bfpass"] = bfpass
+    conf["email_pass"] = email_pass
+
+    if not validate_bigfix_connection(conf):
+        print("Connection to BigFix using your values failed.")
+        print(f"Delete {config_pathname} and try again.")
+        sys.exit(1)
+
+    if not validate_email_connection(conf):
+        print("Connection to email using your values failed.")
+        print(f"Delete {config_pathname} and try again.")
+        sys.exit(1)
 
     sys.exit(0)
 
@@ -117,6 +145,54 @@ def input_int(prompt):
         print("Non-numeric input given")
         sys.exit(1)
     return inval
+
+
+
+def validate_bigfix_connection(conf):
+    """
+    validate_bigfix_connection(conf) - Establish a REST API connection to BigFix
+    """
+    bf_sess = requests.Session()
+    bf_sess.auth = (conf["bfuser"], conf["bfpass"])
+    qheader = {"Content-Type": "application/x-www-form-urlencoded"}
+
+    req = requests.Request(
+        method="GET",
+        url=f"https://{conf['bfserver']}:{conf['bfport']}/api/help",
+        headers=qheader
+    )
+
+    prepped = bf_sess.prepare_request(req)
+
+    result = bf_sess.send(prepped, verify=False)
+
+    if not result.ok:
+        print(f"\n\nREST API call failed with status {result.status_code}")
+        print(f"Reason: {result.text}")
+        return False
+    else:
+        print("We got data back for /api/help")
+        print(f"  http result [{result.status_code} {result.reason}]")
+        return True
+
+    return False
+
+
+def validate_email_connection(conf):
+    """
+    validate_email_connection(conf) - Establish a connection to the email server
+    """
+
+    context = ssl.create_default_context()
+
+    with smtplib.SMTP_SSL(conf["email_server"], conf["email_port"], context=context) as server:
+        server.login(conf["email_user"], conf["email_pass"])
+        server.helo()
+        server.close()
+        return True
+
+    return False
+
 
 
 # Convention for possible future module/import
