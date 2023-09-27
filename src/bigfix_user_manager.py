@@ -7,7 +7,8 @@ import sys
 import os.path
 import json
 import argparse
-#import requests
+
+# import requests
 import keyring
 
 
@@ -77,21 +78,24 @@ def create_config_file(config_pathname):
     print("for this application and we will write the JSON configuration to")
     print(f"the file {config_pathname}")
     print("")
-    bfserver = input("Please enter the BigFix server host name: ")
-    bfport = input_int("Enter the BigFix server REST API port: ")
-    bfuser = input("Enter a BigFix master operator user name: ")
-    bfpass = get_password(f"Enter {bfuser} account password")
-    em_server = input("Enter email server host name: ")
-    em_port = input_int("Enter email server port (SMTP port)")
+    conf["bfserver"] = input("Please enter the BigFix server host name: ")
+    conf["bfport"] = input_int("Enter the BigFix server REST API port: ")
+    conf["bfuser"] = input("Enter a BigFix master operator user name: ")
+    bfpass = get_password(f"Enter {conf['bfuser']} account password: ")
+    conf["email_server"] = input("Enter email server host name: ")
+    conf["email_port"] = input_int("Enter email server port (SMTP port)")
+    conf["email_user"] = input("Enter SMTP user name: ")
+    conf["email_sendto"] = input("Send notification to: ")
+    email_pass = get_password(f"Enter email user {conf['email_user']} password: ")
+    conf["disable_days"] = input_int(
+        "Disable accounts after this many days of inactivity: "
+    )
+    conf["disable_notify_days_before"] = input_int(
+        "Notify this many days before disabling: "
+    )
 
-    conf["bfserver"] = bfserver
-    conf["bfport"] = bfport
-    conf["bfuser"] = bfuser
-
-    keyring.set_password("bigfixUserManager_MO", bfuser, bfpass)
-
-    conf["email_server"] = em_server
-    conf["email_port"] = em_port
+    keyring.set_password("bigfixUserManager_MO", conf["bfuser"], bfpass)
+    keyring.set_password("bigfixUserManager_email", conf["email_user"], email_pass)
 
     with open(config_pathname, "w", encoding="utf-8") as cpath:
         cpath.write(json.dumps(conf, indent=4))
