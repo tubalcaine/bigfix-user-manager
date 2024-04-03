@@ -7,9 +7,8 @@ import sys
 import os.path
 import json
 import argparse
-import ssl
-import smtplib
 
+import xml.etree.ElementTree as ET
 import requests
 import keyring
 
@@ -22,7 +21,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Declare some "constants"
 KEYRING_BIGFIX = "bigfixUserManager_MO"
-KEYRING_EMAIL = "bigfixUserManager_email"
+
 
 def main():
     """main() Main routine"""
@@ -33,6 +32,17 @@ def main():
         type=str,
         help="Pathname of configuration file (required)",
         required=True,
+    )
+
+    parser.add_argument(
+        "-f",
+        "--fromuser",
+        type=str,
+        help="BigFix User to copy from (and optionally delete)",
+    )
+
+    parser.add_argument(
+        "-t", "--touser", type=str, help="BigFix User to copy to (must already exist)"
     )
 
     # Parse the arguments
@@ -48,9 +58,14 @@ def main():
     # We should have our user info and we should be able to
     # extract passwords from the OS keyring.
     conf["bfpass"] = keyring.get_password(KEYRING_BIGFIX, conf["bfuser"])
-    conf["email_pass"] = keyring.get_password(KEYRING_EMAIL, conf["email_user"])
 
     print(f"{conf}")
+
+    operators = get_bigfix_operators(conf)
+
+    print(operators)
+
+    sys.exit(0)
 
 
 def get_password(prompt):
@@ -92,24 +107,8 @@ def create_config_file(config_pathname):
     conf["bfport"] = input_int("Enter the BigFix server REST API port: ")
     conf["bfuser"] = input("Enter a BigFix master operator user name: ")
     bfpass = get_password(f"Enter {conf['bfuser']} account password")
-    conf["email_server"] = input("Enter email server host name: ")
-    conf["email_port"] = input_int("Enter email server port (SMTP port): ")
-    conf["email_user"] = input("Enter SMTP user name: ")
-    email_pass = get_password(f"Enter email user {conf['email_user']} password")
-    conf["email_sendto"] = input("Send notification to: ")
-    conf["disable_days"] = input_int(
-        "Disable accounts after this many days of inactivity: "
-    )
-    conf["disable_notify_days_before"] = input_int(
-        "Notify this many days before disabling: "
-    )
-
-    if conf["disable_notify_days_before"] > conf["disable_days"]:
-        print("Notification days cannot be greater than disavle days.")
-        sys.exit(1)
 
     keyring.set_password(KEYRING_BIGFIX, conf["bfuser"], bfpass)
-    keyring.set_password(KEYRING_EMAIL, conf["email_user"], email_pass)
 
     with open(config_pathname, "w", encoding="utf-8") as cpath:
         cpath.write(json.dumps(conf, indent=4))
@@ -120,19 +119,11 @@ def create_config_file(config_pathname):
     # We have already written out the config file, so we can "slot in"
     # the passwords for testing here.
     conf["bfpass"] = bfpass
-    conf["email_pass"] = email_pass
 
     if not validate_bigfix_connection(conf):
         print("Connection to BigFix using your values failed.")
         print(f"Delete {config_pathname} and try again.")
         sys.exit(1)
-
-    if not validate_email_connection(conf):
-        print("Connection to email using your values failed.")
-        print(f"Delete {config_pathname} and try again.")
-        sys.exit(1)
-
-    sys.exit(0)
 
 
 def input_int(prompt):
@@ -147,7 +138,6 @@ def input_int(prompt):
     return inval
 
 
-
 def validate_bigfix_connection(conf):
     """
     validate_bigfix_connection(conf) - Establish a REST API connection to BigFix
@@ -159,7 +149,7 @@ def validate_bigfix_connection(conf):
     req = requests.Request(
         method="GET",
         url=f"https://{conf['bfserver']}:{conf['bfport']}/api/help",
-        headers=qheader
+        headers=qheader,
     )
 
     prepped = bf_sess.prepare_request(req)
@@ -178,21 +168,102 @@ def validate_bigfix_connection(conf):
     return False
 
 
-def validate_email_connection(conf):
+def get_bigfix_operators(conf):
     """
-    validate_email_connection(conf) - Establish a connection to the email server
+    get_bigfix_operators(conf) - Get a list of BigFix operators
     """
 
-    context = ssl.create_default_context()
+    # First, get all the roles so we can tell when we iterate over operators
+    # what kind of user each user is. All we are concerned about is the master
+    # operator flag.
 
-    with smtplib.SMTP_SSL(conf["email_server"], conf["email_port"], context=context) as server:
-        server.login(conf["email_user"], conf["email_pass"])
-        server.helo()
-        server.close()
-        return True
+    user = {}
 
-    return False
+    bf_sess = requests.Session()
+    bf_sess.auth = (conf["bfuser"], conf["bfpass"])
+    qheader = {"Content-Type": "application/x-www-form-urlencoded"}
 
+    req = requests.Request(
+        method="GET",
+        url=f"https://{conf['bfserver']}:{conf['bfport']}/api/roles",
+        headers=qheader,
+    )
+
+    prepped = bf_sess.prepare_request(req)
+
+    result = bf_sess.send(prepped, verify=False)
+
+    if not result.ok:
+        print(f"\n\nREST API call failed with status {result.status_code}")
+        print(f"Reason: {result.text}")
+        sys.exit(1)
+
+    # We have a good result, so we can parse the XML
+
+    # Parse the XML into a dictionary
+    root = ET.fromstring(result.text)
+
+    for role in root.findall("Role"):
+        is_mo = False
+        role_name = role.find("Name").text
+        if role.find("MasterOperator").text == "1":
+            is_mo = True
+        else:
+            is_mo = False
+        for op in role.find("Operators"):
+            if op.text not in user:
+                user[op.text] = {"MasterOperator": is_mo, "RoleName": []}
+                user[op.text]["RoleName"].append(role_name)
+            elif user[op.text]["MasterOperator"] is False:
+                user[op.text]["RoleName"].append(role_name)
+                if is_mo is True:
+                    user[op.text]["MasterOperator"] = True
+
+    bf_sess = requests.Session()
+    bf_sess.auth = (conf["bfuser"], conf["bfpass"])
+    qheader = {"Content-Type": "application/x-www-form-urlencoded"}
+
+    req = requests.Request(
+        method="GET",
+        url=f"https://{conf['bfserver']}:{conf['bfport']}/api/operators",
+        headers=qheader,
+    )
+
+    prepped = bf_sess.prepare_request(req)
+
+    result = bf_sess.send(prepped, verify=False)
+
+    if not result.ok:
+        print(f"\n\nREST API call failed with status {result.status_code}")
+        print(f"Reason: {result.text}")
+        sys.exit(1)
+
+    # We have a good result, so we can parse the XML
+
+    # Parse the XML into a dictionary
+    root = ET.fromstring(result.text)
+    for operator in root.findall("Operator"):
+        operator_dict = {}
+        operator_dict["Name"] = operator.find("Name").text
+        operator_dict["MasterOperator"] = operator.find("MasterOperator").text
+        operator_dict["Resource"] = operator.attrib["Resource"]
+        if operator_dict["Name"] in user:
+            user[operator_dict["Name"]]["Resource"] = operator_dict["Resource"]
+        else:
+            if operator_dict["MasterOperator"] == "True":
+                user[operator_dict["Name"]] = {
+                    "MasterOperator": True,
+                    "Resource": operator_dict["Resource"],
+                    "RoleName": [],
+                }
+            else:
+                user[operator_dict["Name"]] = {
+                    "MasterOperator": False,
+                    "Resource": operator_dict["Resource"],
+                    "RoleName": [],
+                }
+
+    return user
 
 
 # Convention for possible future module/import
