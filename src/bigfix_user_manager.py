@@ -61,9 +61,33 @@ def main():
 
     print(f"{conf}")
 
-    operators = get_bigfix_operators(conf)
+    operator = get_bigfix_operators(conf)
 
-    print(operators)
+    # Validate the user input
+    if arg.fromuser is not None:
+        if arg.fromuser not in operator:
+            print(f"User {arg.fromuser} not found in BigFix")
+            sys.exit(1)
+
+    if arg.touser is not None:
+        if arg.touser not in operator:
+            print(f"User {arg.touser} not found in BigFix")
+            sys.exit(1)
+
+    if (
+        operator[arg.fromuser]["MasterOperator"]
+        and not operator[arg.touser]["MasterOperator"]
+    ):
+        print(
+            f"Cannot copy from a master operator {arg.fromuser} "
+            f"to a non-master operator {arg.touser}"
+        )
+        sys.exit(1)
+
+    # Now we have our "to" and "from" users, we can archive the actions,
+    # move the content, and optionally delete the "from" user.
+
+    
 
     sys.exit(0)
 
@@ -113,7 +137,7 @@ def create_config_file(config_pathname):
     with open(config_pathname, "w", encoding="utf-8") as cpath:
         cpath.write(json.dumps(conf, indent=4))
 
-    print("Config file written. Passwords save in keystore.")
+    print("Config file written. Passwords saved in OS keystore.")
     print("Testing connectivity to BigFix and email.")
 
     # We have already written out the config file, so we can "slot in"
@@ -124,6 +148,11 @@ def create_config_file(config_pathname):
         print("Connection to BigFix using your values failed.")
         print(f"Delete {config_pathname} and try again.")
         sys.exit(1)
+
+    print("No actions taken when config file is created. Run again ")
+    print("to copy a user account.")
+
+    sys.exit(0)
 
 
 def input_int(prompt):
