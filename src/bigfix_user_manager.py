@@ -30,7 +30,8 @@ def main():
         "-c",
         "--config",
         type=str,
-        help="Pathname of configuration file (required)",
+        help="Pathname of configuration file (required).\n" 
+        "First run will interactively create this file.",
         required=True,
     )
 
@@ -87,9 +88,44 @@ def main():
     # Now we have our "to" and "from" users, we can archive the actions,
     # move the content, and optionally delete the "from" user.
 
+    from_user = operator[arg.fromuser]
+    to_user = operator[arg.touser]
 
+    content = get_opsite_content(conf, arg.fromuser)
+    if content is None:
+        print("Actions export failed")
+        sys.exit(1)
+    else:
+        print("Actions exported successfully")
 
     sys.exit(0)
+
+def get_opsite_content(conf, user):
+    """
+    export_actions(conf, user) - Export actions for a given user
+    """
+    # Implement the logic to export actions for the given user
+    # Return True if successful, False otherwise
+    bf_sess = requests.Session()
+    bf_sess.auth = (conf["bfuser"], conf["bfpass"])
+    qheader = {"Content-Type": "application/x-www-form-urlencoded"}
+    req = requests.Request(
+        method="GET",
+        url=f"https://{conf['bfserver']}:{conf['bfport']}/api/site/operator/{user}/content",
+        headers=qheader,
+    )
+    prepped = bf_sess.prepare_request(req)
+    result = bf_sess.send(prepped, verify=False)
+    if not result.ok:
+        print(f"\n\nREST API call failed with status {result.status_code}")
+        print(f"Reason: {result.text}")
+        return None
+    else:
+        opsite_xml = result.text
+
+    # Implement the logic to export actions for the given user
+    # Return True if successful, False otherwise
+    return opsite_xml
 
 
 def get_password(prompt):
@@ -279,7 +315,7 @@ def get_bigfix_operators(conf):
         if operator_dict["Name"] in user:
             user[operator_dict["Name"]]["Resource"] = operator_dict["Resource"]
         else:
-            if operator_dict["MasterOperator"] == "True":
+            if operator_dict["MasterOperator"] == "true":
                 user[operator_dict["Name"]] = {
                     "MasterOperator": True,
                     "Resource": operator_dict["Resource"],

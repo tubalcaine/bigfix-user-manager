@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 .vscode/launch.json
 pkg/mod/golang.org/x/tools@v0.13.0/go/packages/packagestest/testdata/groups/two/modules/example.com/extra/v2/me.go
+config.json
